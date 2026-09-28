@@ -19,6 +19,7 @@ import geometry_utils
 import list_utils
 import yaml #pip install PyYAML #https://pypi.org/project/PyYAML/
 import progressBarClass
+import spatial_grid
 
 ###experimental terrain import
 ###STH & EKT 05 Feb 2020
@@ -97,11 +98,56 @@ def determineDroughtTol(theGarden):
                     #print("here")
                     theGarden.kill(obj)
 
+def countPhotonsGettingThrough(x, y, r, numbPhotons, covers):
+    ###Drop numbPhotons photons at random on a plant at (x, y) with radius r,
+    ###and count how many get through the canopies above it. covers is a list
+    ###of (x, y, radius, transmittance) for those canopies, in the order of the
+    ###plant's overlap list.
+    hitCount=0
+    twoPi=3.14*2
+    for photon in range(numbPhotons):
+        ###pick uniformly distributed point in a circle
+        randAngle=random.random()*twoPi
+        #####
+        ###This is apparently a very old bug dating back to 2009
+        ###The way it is written the points cluster toward the center
+        ###which is exactly what the comments mention it is trying to avoid
+        ###STH 26 Sept 2026
+
+        # randr=(random.random()*(plant.r-0))+0 #random between 0 and the radius
+        # #randr =math.sqrt(randr) #if you don't use sqrt, you get clustering in the center
+        # randr =randr**0.5 #if you don't use sqrt, you get clustering in the center
+        randr=r*(random.random()**0.5)   #r*sqrt(u) spreads photons evenly over the canopy
+        #####
+        photonX = (randr*math.cos(randAngle))+x
+        photonY = (randr*math.sin(randAngle))+y
+        ###The photon stops at the first canopy it lands in (in the order of
+        ###the overlap list), unless it gets through that canopy. Either way it
+        ###isn't checked against the rest. (The distance is worked out as in
+        ###geometry_utils.pointInsideCircle.)
+        blocked=False
+        for coverX, coverY, coverR, coverTransmittance in covers:
+            if math.hypot(coverX-photonX, coverY-photonY)<=coverR:
+                if random.random() > coverTransmittance:
+                    blocked=True
+                break
+        if not blocked:
+            hitCount=hitCount+1
+    return hitCount
+
 def determineShade(theGarden):
     if theGarden.showProgressBar:
         print("***Generating lists of overlapping plants. This could take a while...***")
         theProgressBar= progressBarClass.progressbarClass(len(theGarden.soil),"*")
         i=0
+    ###A grid of everything in the soil, to find the objects near each plant
+    ###quickly (see spatial_grid.py), and the largest radius, which is how far
+    ###away something can be and still overlap a plant.
+    largestRadius=0.0
+    for anObject in theGarden.soil:
+        if anObject.r>largestRadius:
+            largestRadius=anObject.r
+    grid=spatial_grid.SpatialGrid(theGarden.soil, max(2.0*largestRadius, 1.0))
     ###populate the overlap list
     theIndex=0
     for plantOne in theGarden.soil:
@@ -117,8 +163,12 @@ def determineShade(theGarden):
             #        plantOne.overlapList.remove(overlappingItem)
             ###need to insert something so tallest plant looks at all the other plants of exactly the same size
             ###if they are the same size and overlapping, they need to share shading
-            for plantTwo in range(theIndex):
-                plantTwo=theGarden.soil[plantTwo]
+            ###Each plant is checked against the first theIndex objects in the soil,
+            ###where theIndex is the number of plants done so far. The grid gives
+            ###just the ones of those near enough to overlap (a little further, to
+            ###be safe with rounding), in the same order.
+            reach=(plantOne.r+largestRadius)*1.000001+0.000001
+            for plantTwo in grid.near(plantOne.x, plantOne.y, reach, theIndex):
                 ###is plant two overlapping you?
                 overlapStatus=geometry_utils.checkOverlap(plantOne.x, plantOne.y, plantOne.r, plantTwo.x, plantTwo.y, plantTwo.r)
                 if overlapStatus>0:
@@ -156,11 +206,13 @@ def determineShade(theGarden):
                 if len(plant.overlapList)==1: ###if you are covered by just 1 other, do a direct calc
                     overPlant =plant.overlapList[0]
                     areaCovered=geometry_utils.areaOverlappingCircles(plant.x, plant.y, plant.r, overPlant.x, overPlant.y, overPlant.r)
-                    areaCovered=areaCovered-(areaCovered*plantTwo.canopyTransmittance)
+                    ####This is a verb old bug
+                    #STH 26 Sept 2026
+                    #areaCovered=areaCovered-(areaCovered*plantTwo.canopyTransmittance)
+                    areaCovered=areaCovered-(areaCovered*overPlant.canopyTransmittance)
+                    ####
                     thePlantAreaExposed=thePlantAreaTotal-areaCovered
-                    #plant.areaCovered=areaCovered
                     fractionExposed= thePlantAreaExposed/thePlantAreaTotal
-                    #fractionExposed=fractionExposed*theGarden.lightIntensity #try and take into account overall world light intensity
                     fractionExposed=fractionExposed*theRegion.lightIntensity #try and take into account overall world light intensity
                     thePlantAreaExposed= thePlantAreaTotal*fractionExposed
                     plant.areaCovered=thePlantAreaTotal-thePlantAreaExposed
@@ -171,28 +223,12 @@ def determineShade(theGarden):
                     numbPhotons= numbPhotons*100
                     if numbPhotons>750: #we don't need monster numbers
                         numbPhotons=750
-                    hitCount=0
-                    for photon in range(numbPhotons):
-                        #####consider moving this to geometry_utils
-                        ###pick uniformly distributed point in a circle
-                        randr=(random.random()*(plant.r-0))+0 #random between 0 and the radius
-                        twoPi=math.pi*2
-                        randAngle=random.random()*twoPi
-                        #randr =math.sqrt(randr) #if you don't use sqrt, you get clustering in the center
-                        randr =randr**0.5 #if you don't use sqrt, you get clustering in the center
-                        photonX = (randr*math.cos(randAngle))+plant.x
-                        photonY = (randr*math.sin(randAngle))+plant.y
-                        ######
-                        for overPlant in plant.overlapList:
-                            if not photonX=="gone":
-                                if geometry_utils.pointInsideCircle(overPlant.x, overPlant.y, overPlant.r, photonX, photonY):
-                                    randomValue=random.random()
-                                    if randomValue > overPlant.canopyTransmittance:
-                                        ###these points are where the overlap is
-                                        photonX="gone"
-                                    break
-                        if not photonX=="gone":
-                            hitCount=hitCount+1
+                    ###The canopies above, as (x, y, radius, transmittance), looked
+                    ###up once here rather than for every photon.
+                    covers=[]
+                    for overPlant in plant.overlapList:
+                        covers.append((overPlant.x, overPlant.y, overPlant.r, overPlant.canopyTransmittance))
+                    hitCount=countPhotonsGettingThrough(plant.x, plant.y, plant.r, numbPhotons, covers)
                     if numbPhotons ==0:
                         fractionExposed=0.0
                     else:
@@ -216,6 +252,19 @@ def determineShade(theGarden):
 
 
 
+def isInsideRegion(theRegion, x, y):
+    ###is the point x,y inside a region? Regions are squares or circles
+    ###centred on theRegion.x, theRegion.y; size is the side of a square or
+    ###the diameter of a circle.
+    if theRegion.shape=='square':
+        return geometry_utils.pointInsideSquare(theRegion.x, theRegion.y, theRegion.size, x, y)
+    elif theRegion.shape=='circle':
+        #size needs to be radius but region defines diameter
+        return geometry_utils.pointInsideCircle(theRegion.x, theRegion.y, theRegion.size/2.0, x, y)
+    else:
+        raise ValueError("Region '%s' has shape '%s'. It must be 'square' or 'circle'." % (theRegion.name, theRegion.shape))
+
+
 class garden(object):
     def __init__(self):
         super(garden, self).__init__()
@@ -233,6 +282,8 @@ class garden(object):
         self.waterLevel = "none"
         self.maxElevation = 0
         ##########################
+        #counts seeds as they are planted. See nextPlantingNumber
+        self.plantingCount = 0
         fileLoc = "Vida World Preferences.yml"
         self.importPrefs(fileLoc)
         if self.lightIntensity>1.0: self.lightIntensity=1.0
@@ -256,6 +307,19 @@ class garden(object):
             i=i+1
     
     
+    def nextPlantingNumber(self):
+        #Each seed gets a number when it is planted, bigger for each seed.
+        #removeOverlaps uses it (as timePlanted) to decide which of two equal
+        #seeds was planted first. It used to be the clock time, time.time(),
+        #but two seeds planted quickly one after the other can get the same
+        #time (especially on Windows), which made runs impossible to repeat.
+        if not hasattr(self, "plantingCount"):
+            #gardens saved by older versions of Vida used the clock time,
+            #so carry on from the current time to keep new seeds after old ones
+            self.plantingCount = time.time()
+        self.plantingCount = self.plantingCount + 1
+        return self.plantingCount
+
     def plantSeed(self, theSeed):
         #self=garden, obj=seed
         theGarden=self
@@ -264,7 +328,7 @@ class garden(object):
         #    idNumb=str(random.random())
         #else:
         #    idNumb=theNameList[1]
-        theSeed.timePlanted=time.time()
+        theSeed.timePlanted=theGarden.nextPlantingNumber()
         #theSeed.name="plantedSeed %s" % (idNumb)
         theSeed.name=str(uuid.uuid4())
         if theSeed.motherPlant==0:
@@ -279,19 +343,23 @@ class garden(object):
             for aRegion in theGarden.theRegions:
                 #print aRegion.name
                 #print theSeed.name
-                if aRegion.shape=='square':
-                    inSubregion=geometry_utils.pointInsideSquare(aRegion.x, aRegion.y, aRegion.size, theSeed.x, theSeed.y)
-                elif aRegion.shape=='circle':
-                    #size needs to be radius but region defines diameter
-                    inSubregion=geometry_utils.pointInsideCircle(aRegion.x, aRegion.y, aRegion.size/2.0, theSeed.x, theSeed.y)
-                if inSubregion:
+                if isInsideRegion(aRegion, theSeed.x, theSeed.y):
                     if not aRegion in theSeed.subregion:
                         theSeed.subregion.append(aRegion)        
         return theSeed
     
     def kill(self, theObject):
         theGarden=self
-        if theObject in self.soil:
+        ###Find where theObject is in the soil just once: the soil is a long
+        ###list, and this used to look through it twice (to see whether
+        ###theObject was there, and again to remove it). Planting the dropped
+        ###seeds below only adds to the end of the soil, so the place stays
+        ###right.
+        try:
+            place=self.soil.index(theObject)
+        except ValueError:
+            place=None
+        if place is not None:
             #die!
             if len(theObject.seedList)>0:
                 for theSeed in theObject.seedList:
@@ -307,7 +375,7 @@ class garden(object):
             else:
                 self.numbPlants=self.numbPlants-1
             self.deathNote.append(theObject)
-            self.soil.remove(theObject)
+            del self.soil[place]
     
     def calcEulerGreenhill(self, plant):
         theGarden=self
@@ -374,11 +442,49 @@ class garden(object):
             return 0
     
     
-    def checkForOverlap(self, theObject):
+    def makeOverlapGrid(self):
+        ###A grid of everything in the soil, so checkForOverlap can find what is
+        ###near an object quickly. Also gives the largest seed or stem radius,
+        ###which is how far away something can be and still touch an object.
+        largestRadius=0.0
+        for anObject in self.soil:
+            if anObject.isSeed:
+                r=anObject.radiusSeed
+            else:
+                r=anObject.radiusStem
+            if r>largestRadius:
+                largestRadius=r
+        #cells about the size of the biggest stem, and at least a metre
+        cellSize=max(2.0*largestRadius, 1.0)
+        return spatial_grid.SpatialGrid(self.soil, cellSize), largestRadius
+
+    def killAndUpdateGrid(self, theObject, grid):
+        ###kill() theObject, and make the same change to a grid made by
+        ###makeOverlapGrid: take the object out, and add any seeds it dropped
+        ###into the soil. Returns the radius of the biggest seed dropped (0.0
+        ###if none), since that could be the new largest radius.
+        if not theObject in self.soil:
+            #it has already died, so kill() does nothing
+            self.kill(theObject)
+            return 0.0
+        numberBefore=len(self.soil)
+        self.kill(theObject)
+        grid.remove(theObject)
+        #kill() removes the object and adds the dropped seeds to the end
+        numberDropped=len(self.soil)-(numberBefore-1)
+        largestDropped=0.0
+        for droppedSeed in self.soil[len(self.soil)-numberDropped:]:
+            grid.add(droppedSeed)
+            if droppedSeed.radiusSeed>largestDropped:
+                largestDropped=droppedSeed.radiusSeed
+        return largestDropped
+
+    def checkForOverlap(self, theObject, grid=None, largestRadius=0.0):
         #specialized routine for detecting overlaps
         #accepts an object (plant or seed)
         #looks at all objects to see if seeds or stems touch
         #returns a list of objects the query object is touching
+        #grid (from makeOverlapGrid) is optional: it only makes this faster
         theGarden=self
         if theObject.isSeed:
             r=theObject.radiusSeed
@@ -387,7 +493,13 @@ class garden(object):
         theIndex=0
         theOverlapList=[]
         if len(theObject.overlapList)==0:
-            listToCheck=theGarden.soil
+            if grid==None:
+                listToCheck=theGarden.soil
+            else:
+                #only the objects close enough to touch it (a little further, to be
+                #safe with rounding), in the same order as theGarden.soil
+                reach=(r+largestRadius)*1.000001+0.000001
+                listToCheck=grid.near(theObject.x, theObject.y, reach)
         else:
             listToCheck=theObject.overlapList
         for anObject in listToCheck:
@@ -412,30 +524,34 @@ class garden(object):
                 print("***Removing overlapping objects***")
                 theProgressBar= progressBarClass.progressbarClass(len(theGarden.soil),"*")
                 i=0
+            #The grid finds the objects near obj quickly. It is kept up to date
+            #as things are killed, by killAndUpdateGrid.
+            grid, largestRadius=theGarden.makeOverlapGrid()
             for obj in theGarden.soil[:]:
                 ###seeds and or stems that overlap are violating physics.
                 ##Rules about overlapping objects:
                 #####1.) If 2 objects overlap, the more massive object remains.
                 #####2.) If 2 seeds overlap and they have the same mass, the oldest seed remains.
-                objectList=theGarden.checkForOverlap(obj)
+                objectList=theGarden.checkForOverlap(obj, grid, largestRadius)
                 for overlappingObject in objectList:
+                    loser=None
                     if obj.massTotal>overlappingObject.massTotal:
                         overlappingObject.causeOfDeath="crushed"
-                        theGarden.kill(overlappingObject)
-                        break
+                        loser=overlappingObject
                     elif obj.massTotal<overlappingObject.massTotal:
                         obj.causeOfDeath="crushed"
-                        theGarden.kill(obj)
-                        break
+                        loser=obj
                     elif obj.massTotal==overlappingObject.massTotal:
                         if obj.timePlanted>overlappingObject.timePlanted:
                             obj.causeOfDeath="overlap violation"
-                            theGarden.kill(obj)
-                            break
+                            loser=obj
                         else:
                             obj.causeOfDeath="overlap violation"
-                            theGarden.kill(overlappingObject)
-                            break
+                            loser=overlappingObject
+                    if loser!=None:
+                        largestDropped=theGarden.killAndUpdateGrid(loser, grid)
+                        largestRadius=max(largestRadius, largestDropped)
+                        break
                 if theGarden.showProgressBar:
                     i=i+1
                     theProgressBar.update(i)
@@ -694,9 +810,16 @@ class garden(object):
             theSeed.massSeed=theSeed.massSeedMax
             #convert mass to volume and the get the radius
             j= theSeed.massSeed/theSeed.densitySeed #this is volume in m^3
-            j=j/(4.0/3.0)
-            j=j/(math.pi)
-            j=math.pow(j, 1.0/3.0)
+            ###Marginally faster to not call math.pi 
+            ###and hardcode the division calcs.
+            ###STH 26 Sept 2026
+            #j=j/(4.0/3.0)
+            #j=j/(math.pi)
+            #j=math.pow(j, 1.0/3.0)
+            j=j/(1.3333)
+            j=j/(3.14)
+            j=j**0.3333
+            ########
             #print terrainFile
             theSeed.radiusSeed=j
             theSeed.z= theSeed.radiusSeed
@@ -710,7 +833,7 @@ class garden(object):
                 theAdjX = theSeed.x + coordAdjust
                 theAdjY = theSeed.y + coordAdjust
                 thePixelValue = terrain_utils.getPixelValue(theAdjX,theAdjY,theGarden.terrainImage)
-                theElevation = terrain_utils.elevationFromPixel(thePixelValue, theGarden.maxElevation)
+                theElevation = terrain_utils.elevationFromPixel(thePixelValue, theGarden.maxElevation, terrain_utils.getPixelRange(theGarden))
                 #print("%s seedX: %s seedY: %s coordAdjust: %s xpixel: %s thePixelValue: %s theElevation: %s" % (theGarden.terrainImage[1], theSeed.x, theSeed.y, coordAdjust, (theSeed.x-coordAdjust), thePixelValue, theElevation))
             else:
                 theElevation = 0.0

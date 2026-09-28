@@ -126,7 +126,7 @@ if __name__ == '__main__':
     parser.add_argument('-va', nargs='*', dest='produceVideo', action=parseAction, required=False)
     parser.add_argument('-fs', nargs='*', dest='produceSummary', action=parseAction, required=False)
     parser.add_argument('-fsa', nargs='*', dest='produceSummary', action=parseAction, required=False)
-    parser.add_argument('-g', nargs='*', type=str, action=parseAction, dest='produceGraphics', required=False, choices=['b','t','s','ts','st','bs','sb','bt','tb','bts','3d' ], help='Graphical view desired')    
+    parser.add_argument('-g', nargs='*', type=str, action=parseAction, dest='produceGraphics', required=False, choices=['b','t','s','ts','st','bs','sb','bt','tb','bts','dxf','glb' ], help='Graphical view desired')    
 
     ##########
     
@@ -149,14 +149,12 @@ if __name__ == '__main__':
     ###parse the graphic options a bit more
     if type(produceGraphics)==list:
         graphicalView=produceGraphics[1]
-        if "3d" in graphicalView:
-            import vdxfGraphics
         produceGraphics=produceGraphics[0]    
     if type(graphicalView)!=list:
         graphicalView=[graphicalView]#make sure the graphicalView is a list
     #now convert the letter code into the number code used
     for i in range(len(graphicalView)):
-        if graphicalView[i]!='3d':
+        if graphicalView[i] not in ('dxf','glb'):
             graphicalView[i]=graphicalView[i].replace('b','1')
             graphicalView[i]=graphicalView[i].replace('t','2')
             graphicalView[i]=graphicalView[i].replace('s','3')
@@ -175,8 +173,12 @@ if __name__ == '__main__':
             print("***Warning: A video output was desired, but a graphical option was not specified\n   Graphical output has been set to the default")
             produceGraphics=True
             graphicalView=[theDefaults['graphicalView']]
-        if graphicalView==['3d']:
-            print("***Warning: A video can not be auto generated from the '3d' graphical option\n   Video output turned off")
+        onlyThreeD=True
+        for aView in graphicalView:
+            if aView not in ('dxf','glb'):
+                onlyThreeD=False
+        if onlyThreeD:
+            print("***Warning: A video can not be auto generated from the 'dxf' or 'glb' graphical options\n   Video output turned off")
             produceVideo=False
 
 #for x in theOpts:
@@ -192,7 +194,7 @@ if __name__ == '__main__':
 
     if theLastChar=="/":
         theOutputFolder=os.path.abspath(fileOrFolder[0])+"/"
-        fileOrFolder=os.listdir(theOutputFolder)
+        fileOrFolder=sorted(os.listdir(theOutputFolder))
         fileOrFolder=[i for i in fileOrFolder if not i.startswith('.')]	
 
     if len(fileOrFolder)>0:
@@ -359,7 +361,7 @@ if __name__ == '__main__':
                             theColumn=[float(theRow) for theRow in theColumn]
                             theColumnMin=min(theColumn)
                             theColumnMax=max(theColumn)
-                            theColumnSum=sum(theColumn)
+                            theColumnSum=list_utils.sum_in_order(theColumn)
                             theColumnAvg=theColumnSum/float(len(theColumn))
                             theOutput[0].extend(["min "+theColumnTitle, "max "+theColumnTitle, "ave "+theColumnTitle])
                             theOutput[1].extend([theColumnMin, theColumnMax, theColumnAvg])
@@ -454,7 +456,7 @@ if __name__ == '__main__':
 
                     for theName in theSpeciesNames:
                         theOutput[0].append(("Total Functional Area of %s") % theName)
-                        theOutput[1].append(sum(theSpeciesDict[theName]))
+                        theOutput[1].append(list_utils.sum_in_order(theSpeciesDict[theName]))
 
 
                     #allSpeciesFunctionalArea = dict(zip(theColumn,theData))
@@ -518,7 +520,7 @@ if __name__ == '__main__':
         concatFileName="merged_"+theSimName
         theOutput=open(theStatsFolder+concatFileName+".csv",'w')
         print("***Merging files....")
-        fileList=glob.glob(theOutputFolder+"*.csv")
+        fileList=sorted(glob.glob(theOutputFolder+"*.csv")) #sorted so the merged file is the same on every computer
         theHeader=""
         for aFile in fileList:
             if theHeader=="":
